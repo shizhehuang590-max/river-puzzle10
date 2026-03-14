@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>20人終極過河 - 真實倒帶回溯</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f4f6f9; text-align: center; padding: 20px; }
+        #game-board {
+            display: flex; justify-content: space-between; align-items: stretch; background-color: #fff;
+            border: 3px solid #bdc3c7; border-radius: 12px; padding: 20px; margin: 20px auto; max-width: 1000px;
+            transition: all 0.3s ease; box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        }
+        .bank { width: 35%; min-height: 200px; background-color: #e8f8f5; border: 2px dashed #1abc9c; border-radius: 10px; padding: 15px; font-size: 2rem; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; }
+        #river { width: 25%; background-color: #3498db; position: relative; border-radius: 10px; overflow: hidden; }
+        #boat { font-size: 3.5rem; position: absolute; top: 50%; transform: translateY(-50%); transition: left 1s ease-in-out; }
+        .boat-left { left: 10px; } .boat-right { left: calc(100% - 70px); }
+        button { padding: 12px 24px; font-size: 1.1rem; margin: 0 10px; cursor: pointer; background-color: #34495e; color: white; border: none; border-radius: 8px; min-width: 130px; font-weight: bold; }
+        button:hover { background-color: #2c3e50; }
+        #status-text { font-size: 1.4rem; font-weight: bold; margin: 20px auto; min-height: 80px; max-width: 900px; transition: color 0.3s; line-height: 1.4; }
+        .error-state { border-color: #e74c3c !important; box-shadow: 0 0 25px rgba(231, 76, 60, 0.7) !important; background-color: #fdfbfb; }
+        .backtrack-state { border-color: #f39c12 !important; box-shadow: 0 0 20px rgba(243, 156, 18, 0.5) !important; }
+    </style>
+</head>
+<body>
+    <h1>🚀 20人極限過河：真實倒帶推演</h1>
+    <div id="status-text">載入環境中...</div>
+    <div id="game-board">
+        <div id="left-bank" class="bank"></div>
+        <div id="river"><div id="boat" class="boat-left">🛳️</div></div>
+        <div id="right-bank" class="bank"></div>
+    </div>
+    <div id="controls">
+        <button id="play-btn" onclick="togglePlay()">▶️ 自動推演</button>
+        <span id="step-counter" style="font-size: 1.3rem; font-weight: bold; margin: 0 15px; color: #2c3e50;">節點: 0</span>
+    </div>
+
+    <script>
+        const states = [
+            { desc: "【初始狀態】全家 20 口在左岸，準備開始推演。", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "", boat: "left" },
+            // 錯誤路徑 1 (深入 3 步)
+            { desc: "❌ 錯誤嘗試 1：讓家長當司機 (👨帶兩👦 ➡️)", L: "👩 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👨 👦 👦", boat: "right" },
+            { desc: "❌ 錯誤嘗試 1：爸爸獨自返回 (⬅️ 👨)", L: "👨 👩 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦", boat: "left" },
+            { desc: "🚨 致命錯誤：媽媽帶兩女兒過河！觸發 C1 爸爸打留在左岸的女兒！", L: "👨 👦 👦 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👩 👦 👦 👧 👧", boat: "right", error: true },
+            // 一步一步倒帶
+            { desc: "⏪ 任務失敗：退回上一步 (⬅️ 👩👧👧 退回)", L: "👨 👩 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦", boat: "left", backtrack: true },
+            { desc: "⏪ 發現此路徑不通，繼續退回 (👨 ➡️ 退回)", L: "👩 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👨 👦 👦", boat: "right", backtrack: true },
+            { desc: "⏪ 放棄家長當司機的路線，退回起點 (⬅️ 👨👦👦 退回)", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "", boat: "left", backtrack: true },
+            
+            // 錯誤路徑 2 (深入 3 步)
+            { desc: "❌ 錯誤嘗試 2：先送特殊人物 (👮帶🦹 ➡️)", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👩‍🍼 👶", R: "👮 🦹", boat: "right" },
+            { desc: "❌ 錯誤嘗試 2：警察獨自返回 (⬅️ 👮)", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 👩‍🍼 👶", R: "🦹", boat: "left" },
+            { desc: "🚨 致命錯誤：保姆帶嬰兒過河！右岸小偷犯罪！", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮", R: "🦹 👩‍🍼 👶", boat: "right", error: true },
+            // 一步一步倒帶
+            { desc: "⏪ 任務失敗：退回上一步 (⬅️ 👩‍🍼👶 退回)", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 👩‍🍼 👶", R: "🦹", boat: "left", backtrack: true },
+            { desc: "⏪ 發現此路徑不通，繼續退回 (👮 ➡️ 退回)", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👩‍🍼 👶", R: "👮 🦹", boat: "right", backtrack: true },
+            { desc: "⏪ 放棄此路線，退回起點 (⬅️ 👮🦹 退回)", L: "👨 👩 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "", boat: "left", backtrack: true },
+
+            // 正確解法
+            { desc: "✅ 找到唯一破局點！🧑‍🔧僕人1 擔任全職司機。\n步驟 1：🧑‍🔧僕人1 載著兩個 👦兒子 過河", L: "👨 👩 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "🧑‍🔧 👦 👦", boat: "right" },
+            { desc: "✅ 步驟 2：🧑‍🔧僕人1 返回", L: "👨 👩 👦 👦 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦", boat: "left" },
+            { desc: "✅ 步驟 3：🧑‍🔧僕人1 載著另外兩個 👦兒子 過河", L: "👨 👩 👧 👧 👧 👧 👴 👵 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "🧑‍🔧 👦 👦 👦 👦", boat: "right" },
+            { desc: "✅ 步驟 4：🧑‍🔧僕人1 返回", L: "👨 👩 👧 👧 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦 👦 👦", boat: "left" },
+            { desc: "✅ 步驟 5：🧑‍🔧僕人1 載著兩個 👧女兒 過河", L: "👨 👩 👧 👧 👴 👵 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "🧑‍🔧 👦 👦 👦 👦 👧 👧", boat: "right" },
+            { desc: "✅ 步驟 6：🧑‍🔧僕人1 返回", L: "👨 👩 👧 👧 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦 👦 👦 👧 👧", boat: "left" },
+            { desc: "✅ 步驟 7：🧑‍🔧僕人1 載著另外兩個 👧女兒 過河", L: "👨 👩 👴 👵 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧", boat: "right" },
+            { desc: "✅ 步驟 8：🧑‍🔧僕人1 返回 (小孩全部安全！)", L: "👨 👩 👴 👵 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦 👦 👦 👧 👧 👧 👧", boat: "left" },
+            { desc: "✅ 步驟 9：🧑‍🔧僕人1 載著 👴爺爺 和 👵奶奶 過河", L: "👨 👩 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵", boat: "right" },
+            { desc: "✅ 步驟 10：🧑‍🔧僕人1 返回", L: "👨 👩 🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦 👦 👦 👧 👧 👧 👧 👴 👵", boat: "left" },
+            { desc: "✅ 步驟 11：🧑‍🔧僕人1 載著 👨爸爸 和 👩媽媽 過河", L: "🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩", boat: "right" },
+            { desc: "✅ 步驟 12：🧑‍🔧僕人1 返回 (家族成員大團圓！)", L: "🧑‍🔧 🧑‍🔧 🐕 🐶 👮 🦹 👩‍🍼 👶", R: "👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩", boat: "left" },
+            { desc: "✅ 步驟 13：🧑‍🔧僕人1 載著 👮警察 和 🦹小偷 過河", L: "🧑‍🔧 🐕 🐶 👩‍🍼 👶", R: "🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩 👮 🦹", boat: "right" },
+            { desc: "✅ 步驟 14：🧑‍🔧僕人1 返回", L: "🧑‍🔧 🧑‍🔧 🐕 🐶 👩‍🍼 👶", R: "👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩 👮 🦹", boat: "left" },
+            { desc: "✅ 步驟 15：🧑‍🔧僕人1 載著 👩‍🍼保姆 和 👶嬰兒 過河", L: "🧑‍🔧 🐕 🐶", R: "🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩 👮 🦹 👩‍🍼 👶", boat: "right" },
+            { desc: "✅ 步驟 16：🧑‍🔧僕人1 返回", L: "🧑‍🔧 🧑‍🔧 🐕 🐶", R: "👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩 👮 🦹 👩‍🍼 👶", boat: "left" },
+            { desc: "✅ 步驟 17：🧑‍🔧僕人1 載著 🧑‍🔧僕人2 和 🐕狗1 過河", L: "🐶", R: "🧑‍🔧 🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩 👮 🦹 👩‍🍼 👶 🐕", boat: "right" },
+            { desc: "✅ 步驟 18：🧑‍🔧僕人1 返回接最後一隻狗", L: "🧑‍🔧 🐶", R: "🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩 👮 🦹 👩‍🍼 👶 🐕", boat: "left" },
+            { desc: "🎉 步驟 19：🧑‍🔧僕人1 載著 🐶狗2 過河，20人完美通關！", L: "", R: "🧑‍🔧 🧑‍🔧 👦 👦 👦 👦 👧 👧 👧 👧 👴 👵 👨 👩 👮 🦹 👩‍🍼 👶 🐕 🐶", boat: "right" }
+        ];
+
+        let currentStep = 0; let isPlaying = false; let playInterval;
+
+        function updateBoard() {
+            const state = states[currentStep];
+            document.getElementById("left-bank").innerText = state.L;
+            document.getElementById("right-bank").innerText = state.R;
+            
+            const statusText = document.getElementById("status-text");
+            const board = document.getElementById("game-board");
+            statusText.innerText = state.desc;
+            document.getElementById("step-counter").innerText = `節點: ${currentStep} / ${states.length - 1}`;
+            document.getElementById("boat").className = state.boat === "left" ? "boat-left" : "boat-right";
+
+            board.classList.remove("error-state", "backtrack-state");
+            if (state.error) {
+                board.classList.add("error-state"); statusText.style.color = "#c0392b";
+            } else if (state.backtrack) {
+                board.classList.add("backtrack-state"); statusText.style.color = "#d35400";
+            } else {
+                statusText.style.color = "#2c3e50";
+            }
+
+            if (currentStep === states.length - 1 && isPlaying) togglePlay();
+        }
+
+        function togglePlay() {
+            const playBtn = document.getElementById("play-btn");
+            if (isPlaying) {
+                clearInterval(playInterval); isPlaying = false;
+                playBtn.innerText = "▶️ 繼續推演"; playBtn.style.backgroundColor = "#34495e";
+            } else {
+                if (currentStep === states.length - 1) currentStep = 0;
+                isPlaying = true; playBtn.innerText = "⏸️ 暫停"; playBtn.style.backgroundColor = "#e74c3c";
+                updateBoard();
+                playInterval = setInterval(() => { if (currentStep < states.length - 1) { currentStep++; updateBoard(); } }, 2800); 
+            }
+        }
+        updateBoard();
+    </script>
+</body>
+</html>
